@@ -104,51 +104,46 @@ sort = (files, config) ->
     indexes[path]
 
 # New.
-concat = (files, path, type, wrapper) ->
+concat = (files, path, type, definition) ->
   # nodes = files.map toNode
   root = new SourceNode()
   debug path
   files.forEach (file) ->
     root.add file.node
-    debug JSON.stringify(file.node)
+    #debug JSON.stringify(file.node)
     root.setSourceContent file.node.source, file.source
 
-  root = wrapper root if type is 'javascript'
+  root.prepend definition() if type is 'javascript'
   root.toStringWithSourceMap file: path
 
-minify = (data, smap, path, optimizer, isEnabled, callback) ->
+optimize = (data, smap, path, optimizer, isEnabled, callback) ->
   if isEnabled
-    debug 'minify ' + path
-    debug 'minify ' + data.length
     (optimizer.optimize or optimizer.minify) data, path, (error, result) ->
       if typeof result isnt 'string' # we have sourcemap
         {code, map} = result
         smConsumer = new SourceMapConsumer smap.toJSON()
-        debug smap.toJSON()
         map = SourceMapGenerator.fromSourceMap new SourceMapConsumer map
         map._sources.add path
         map._mappings.forEach (mapping) ->
           mapping.source = path
-        debug JSON.stringify map
         map.applySourceMap smConsumer
-        debug JSON.stringify map
         result = code
       callback error, result, map
   else
     callback null, data, smap
 
-generate = (path, sourceFiles, config, minifiers, callback) ->
+generate = (path, sourceFiles, config, optimizers, callback) ->
   type = if sourceFiles.some((file) -> file.type is 'javascript')
     'javascript'
   else
     'stylesheet'
-  optimizer = minifiers.filter((minifier) -> minifier.type is type)[0]
+  optimizer = optimizers.filter((optimizer) -> optimizer.type is type)[0]
 
   sorted = sort sourceFiles, config
   {code, map} = concat sorted, path, type, config._normalized.modules.definition
 
 
-  minify code, map, path, optimizer, config.optimize, (error, data, map) ->
+  optimize code, map, path, optimizer, config.optimize, (error, data, map) ->
     return callback error if error?
 
     if map

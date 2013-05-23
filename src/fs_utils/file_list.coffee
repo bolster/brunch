@@ -15,15 +15,16 @@ startsWith = (string, substring) ->
 module.exports = class FileList extends EventEmitter
   # Maximum time between changes of two files that will be considered
   # as a one compilation.
-  RESET_TIME: 65
+  RESET_TIME: 165
 
   constructor: (@config) ->
     @files = []
     @assets = []
     @on 'change', @_change
     @on 'unlink', @_unlink
-    @compiling = []
-    @copying = []
+    @compiling = {}
+    @compiled = {}
+    @copying = {}
 
   getAssetErrors: ->
     invalidAssets = @assets.filter((asset) -> asset.error?)
@@ -68,8 +69,9 @@ module.exports = class FileList extends EventEmitter
         .forEach (file, index) =>
           @files.splice index, 1
 
-      if @compiling.length is 0 and @copying.length is 0
+      if Object.keys(@compiling).length is 0 and Object.keys(@copying).length is 0
         @emit 'ready'
+        @compiled = {}
       else
         @resetTimer()
     , @RESET_TIME
@@ -86,24 +88,32 @@ module.exports = class FileList extends EventEmitter
         dependent.dependencies.length > 0
       .filter (dependent) =>
         path in dependent.dependencies
+      .filter (dependent) =>
+        @compiled[dependent.path]
       .forEach(@compile)
 
   compile: (file) =>
-    @compiling.push(file)
-    file.compile (error) =>
-      @compiling.splice @compiling.indexOf(file), 1
+    path = file.path
+    if @compiling[path]
       @resetTimer()
-      return if error?
-      debug "Compiled file '#{file.path}'"
-      @compileDependentFiles file.path
+    else
+      @compiling[path] = true
+      file.compile (error) =>
+        delete @compiling[path]
+        @resetTimer()
+        return if error?
+        debug "Compiled file '#{path}'..."
+        @compiled[path] = true
+        @compileDependentFiles path
 
   copy: (asset) =>
-    @copying.push asset
+    path = asset.path
+    @copying[path] = true
     asset.copy (error) =>
-      @copying.splice @copying.indexOf(asset), 1
+      delete @copying[path]
       @resetTimer()
       return if error?
-      debug "Copied asset '#{asset.path}'"
+      debug "Copied asset '#{path}'"
 
   _add: (path, compiler, linters, isHelper) ->
     isVendor = @is 'vendor', path
