@@ -15,7 +15,7 @@ startsWith = (string, substring) ->
 module.exports = class FileList extends EventEmitter
   # Maximum time between changes of two files that will be considered
   # as a one compilation.
-  RESET_TIME: 65
+  RESET_TIME: 265
 
   constructor: (@config) ->
     @files = []
