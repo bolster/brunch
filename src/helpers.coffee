@@ -218,18 +218,18 @@ exports.setConfigDefaults = setConfigDefaults = (config, configPath) ->
   conventions.tests   ?= /[-_]test\.\w+$/
   conventions.vendor  ?= /vendor(\/|\\)/
 
-  config.notifications ?= on
-  config.optimize     ?= no
+  config.notifications ?= true
+  config.sourceMaps   ?= true
+  config.optimize     ?= false
 
   modules              = config.modules      ?= {}
   modules.wrapper     ?= 'commonjs'
   modules.definition  ?= 'commonjs'
-  modules.addSourceURLs ?= no
 
   config.server       ?= {}
   config.server.base  ?= ''
   config.server.port  ?= 3333
-  config.server.run   ?= no
+  config.server.run   ?= false
   config
 
 getConfigDeprecations = (config) ->

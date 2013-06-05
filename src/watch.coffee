@@ -47,7 +47,7 @@ generateParams = (persistent, options) ->
     params.paths.public = options.publicPath
   if persistent
     params.server = {}
-    params.server.run = yes if options.server
+    params.server.run = true if options.server
     params.server.port = options.port if options.port
   params
 
@@ -66,7 +66,7 @@ startServer = (config, callback = (->)) ->
       throw new Error 'Brunch server file needs to have startServer function'
     server.startServer port, publicPath, log
   else
-    pushserve {port, path: publicPath, base: config.server.base, noLog: yes}, log
+    pushserve {port, path: publicPath, base: config.server.base, noLog: true}, log
 
 # Filter paths that exist and watch them with `chokidar` package.
 #
@@ -164,6 +164,8 @@ getCompileFn = (config, joinConfig, fileList, optimizers, watcher, callback) -> 
       process.on 'exit', (previousCode) ->
         process.exit (if logger.errorHappened then 1 else previousCode)
 
+    fileList.initial = false
+
     return if error?
     # Just pass `fs_utils.GeneratedFile` instances to callbacks.
     callback generatedFiles
@@ -209,7 +211,7 @@ loadPackages = (rootPath, callback) ->
     delete require.cache[require.resolve packagePath]
     json = require packagePath
   catch err
-    return callback "Current directory is not brunch application root path,
+    throw new Error "Current directory is not brunch application root path,
  as it does not contain package.json (#{err})"
   # TODO: test if `brunch-plugin` is in dep’s package.json.
   loadDeps = (deps, isDev) ->
@@ -267,7 +269,7 @@ initialize = (options, configParams, onCompile, callback) ->
 
   # Emit `change` event for each file that is included with plugins.
   getPluginIncludes(plugins).forEach (path) ->
-    changeFileList compilers, linters, fileList, path, yes
+    changeFileList compilers, linters, fileList, path, true
 
   # Initialise file watcher.
   initWatcher config, (error, watcher) ->
@@ -307,7 +309,7 @@ bindWatcherEvents = (config, fileList, compilers, linters, watcher, reload, onCh
     .on 'add', (path) ->
       # Update file list.
       onChange()
-      changeFileList compilers, linters, fileList, path, no
+      changeFileList compilers, linters, fileList, path, false
     .on 'change', (path) ->
       # If file is special (config.coffee, package.json), restart Brunch.
       isConfigFile = possibleConfigFiles[path]
@@ -317,7 +319,7 @@ bindWatcherEvents = (config, fileList, compilers, linters, watcher, reload, onCh
       else
         # Otherwise, just update file list.
         onChange()
-        changeFileList compilers, linters, fileList, path, no
+        changeFileList compilers, linters, fileList, path, false
     .on 'unlink', (path) ->
       # If file is special (config.coffee, package.json), exit.
       # Otherwise, just update file list.

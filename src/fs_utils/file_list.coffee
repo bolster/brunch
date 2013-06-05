@@ -15,7 +15,7 @@ startsWith = (string, substring) ->
 module.exports = class FileList extends EventEmitter
   # Maximum time between changes of two files that will be considered
   # as a one compilation.
-  RESET_TIME: 165
+  RESET_TIME: 65
 
   constructor: (@config) ->
     @files = []
@@ -25,6 +25,7 @@ module.exports = class FileList extends EventEmitter
     @compiling = {}
     @compiled = {}
     @copying = {}
+    @initial = true
 
   getAssetErrors: ->
     invalidAssets = @assets.filter((asset) -> asset.error?)
@@ -36,7 +37,7 @@ module.exports = class FileList extends EventEmitter
 
   # Files that are not really app files.
   isIgnored: (path, test = @config.conventions.ignored) ->
-    return yes if path in [@config.paths.config, @config.paths.packageConfig]
+    return true if path in [@config.paths.config, @config.paths.packageConfig]
 
     switch toString.call(test)
       when '[object RegExp]'
@@ -48,11 +49,11 @@ module.exports = class FileList extends EventEmitter
       when '[object Array]'
         test.some((subTest) => @isIgnored path, subTest)
       else
-        no
+        false
 
   is: (name, path) ->
     convention = @config._normalized.conventions[name]
-    return no unless convention
+    return false unless convention
     if typeof convention isnt 'function'
       throw new TypeError "Invalid convention #{convention}"
     convention path
@@ -82,7 +83,8 @@ module.exports = class FileList extends EventEmitter
   findAsset: (path) ->
     @assets.filter((file) -> file.path is path)[0]
 
-  compileDependentFiles: (path) ->
+  compileDependencyParents: (path) ->
+    debug "Compiling dependency '#{path}' parent(s)"
     @files
       .filter (dependent) =>
         dependent.dependencies.length > 0
@@ -104,7 +106,6 @@ module.exports = class FileList extends EventEmitter
         return if error?
         debug "Compiled file '#{path}'..."
         @compiled[path] = true
-        @compileDependentFiles path
 
   copy: (asset) =>
     path = asset.path
@@ -134,7 +135,7 @@ module.exports = class FileList extends EventEmitter
         @copy (@findAsset(path) ? @_addAsset path)
     else
       if ignored or not compiler
-        @compileDependentFiles path
+        @compileDependencyParents path unless @initial
       else
         @compile (@find(path) ? @_add path, compiler, linters, isHelper)
 
@@ -145,8 +146,8 @@ module.exports = class FileList extends EventEmitter
         @assets.splice(@assets.indexOf(path), 1)
     else
       if ignored
-        @compileDependentFiles path
+        @compileDependencyParents path
       else
         file = @find path
-        file.removed = true
+        file.removed = true if file and not file.disposed
     @resetTimer()
