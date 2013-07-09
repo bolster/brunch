@@ -1,14 +1,16 @@
 'use strict'
 
 {exec} = require 'child_process'
-coffeescript = require 'coffee-script'
 http = require 'http'
 fs = require 'fs'
 os = require 'os'
 sysPath = require 'path'
 logger = require 'loggy'
 {SourceNode} = require 'source-map'
+readComponents = require 'read-components'
 debug = require('debug')('brunch:helpers')
+# Just require.
+require 'coffee-script'
 
 # Extends the object with properties from another object.
 # Example
@@ -136,38 +138,29 @@ exports.identityNode = (code, source) ->
   new SourceNode 1, 0, null, code.split('\n').map (line, index) ->
     new SourceNode index + 1, 0, source, (line + '\n')
 
-exports.cleanModuleName = cleanModuleName = (path) ->
-  path
-    .replace(new RegExp('\\\\', 'g'), '/')
-    .replace(/^app\//, '')
+exports.cleanModuleName = cleanModuleName = (path, nameCleaner) ->
+  nameCleaner path.replace(new RegExp('\\\\', 'g'), '/')
 
-commonJsWrapper = (addSourceURLs = no) -> (fullPath, data, isVendor) ->
-  sourceURLPath = cleanModuleName fullPath
+getModuleWrapper = (type, nameCleaner) -> (fullPath, data, isVendor) ->
+  sourceURLPath = cleanModuleName fullPath, nameCleaner
   moduleName = sourceURLPath.replace /\.\w+$/, ''
   path = JSON.stringify moduleName
 
   if isVendor
-    debug 'commonjs wrapping is vendor '
+    debug 'Wrapping is vendor'
     data
   else
     # Wrap in common.js require definition.
-    """
-window.require.register(#{path}, function(exports, require, module) {
-#{data}
-});
-"""
+    if type is 'commonjs'
+      prefix: "window.require.register(#{path}, function(exports, require, module) {\n"
+      suffix: "});\n\n"
+    else if type is 'amd'
+      data: data.replace /define\s*\(/, (match) -> "#{match}#{path}, "
 
-normalizeWrapper = (typeOrFunction, addSourceURLs) ->
+normalizeWrapper = (typeOrFunction, nameCleaner) ->
   switch typeOrFunction
-    when 'commonjs' then commonJsWrapper addSourceURLs
-    when 'amd'
-      (fullPath, data) ->
-        path = cleanModuleName fullPath
-        """
-define('#{path}', ['require', 'exports', 'module'], function(require, exports, module) {
-#{data}
-});
-"""
+    when 'commonjs' then getModuleWrapper 'commonjs', nameCleaner
+    when 'amd' then getModuleWrapper 'amd', nameCleaner
     when false then (path, data) -> data
     else
       if typeof typeOrFunction is 'function'
@@ -198,25 +191,18 @@ exports.setConfigDefaults = setConfigDefaults = (config, configPath) ->
     join 'root', name
 
   paths                = config.paths     ?= {}
-  paths.root          ?= config.rootPath  ? '.'
-  paths.public        ?= config.buildPath ? joinRoot 'public'
-
-  paths.app           ?= joinRoot 'app'
-  paths.generators    ?= joinRoot 'generators'
-  paths.test          ?= joinRoot 'test'
-  paths.vendor        ?= joinRoot 'vendor'
-
-  paths.assets        ?= join('app', 'assets')
+  paths.root          ?= '.'
+  paths.public        ?= joinRoot 'public'
+  paths.watched       ?= ['app', 'test', 'vendor'].map(joinRoot)
 
   paths.config        ?= configPath       ? joinRoot 'config'
   paths.packageConfig ?= joinRoot 'package.json'
 
   conventions          = config.conventions  ?= {}
-  conventions.assets  ?= /assets(\/|\\)/
+  conventions.assets  ?= /assets[\\/]/
   conventions.ignored ?= paths.ignored ? (path) ->
     sysPath.basename(path)[0] is '_'
-  conventions.tests   ?= /[-_]test\.\w+$/
-  conventions.vendor  ?= /vendor(\/|\\)/
+  conventions.vendor  ?= /(^bower_components|vendor)[\\/]/
 
   config.notifications ?= true
   config.sourceMaps   ?= true
@@ -225,6 +211,7 @@ exports.setConfigDefaults = setConfigDefaults = (config, configPath) ->
   modules              = config.modules      ?= {}
   modules.wrapper     ?= 'commonjs'
   modules.definition  ?= 'commonjs'
+  modules.nameCleaner ?= (path) -> path.replace(/^app\//, '')
 
   config.server       ?= {}
   config.server.base  ?= ''
@@ -234,8 +221,17 @@ exports.setConfigDefaults = setConfigDefaults = (config, configPath) ->
 
 getConfigDeprecations = (config) ->
   messages = []
+  warnRemoved = (path) ->
+    if config.paths[path]
+      messages.push "config.paths.#{path} was removed, use config.paths.watched"
+
   warnMoved = (configItem, from, to) ->
     messages.push "config.#{from} moved to config.#{to}" if configItem
+
+  warnRemoved 'app'
+  warnRemoved 'test'
+  warnRemoved 'vendor'
+  warnRemoved 'assets'
 
   warnMoved config.paths.ignored, 'paths.ignored', 'conventions.ignored'
   warnMoved config.rootPath, 'rootPath', 'paths.root'
@@ -256,16 +252,15 @@ normalizeConfig = (config) ->
   normalized.join = createJoinConfig config.files
   mod = config.modules
   normalized.modules = {}
-  sourceURLs = mod.addSourceURLs and not config.optimize
-  normalized.modules.wrapper = normalizeWrapper mod.wrapper, sourceURLs
+  normalized.modules.wrapper = normalizeWrapper mod.wrapper, config.modules.nameCleaner
   normalized.modules.definition = normalizeDefinition mod.definition
   normalized.conventions = {}
   Object.keys(config.conventions).forEach (name) ->
     normalized.conventions[name] = normalizeChecker config.conventions[name]
-  config._normalized = Object.freeze normalized
+  config._normalized = normalized
   config
 
-exports.loadConfig = (configPath = 'config', options = {}) ->
+exports.loadConfig = (configPath = 'config', options = {}, callback) ->
   fullPath = require.resolve sysPath.resolve configPath
   delete require.cache[fullPath]
   try
@@ -280,5 +275,15 @@ exports.loadConfig = (configPath = 'config', options = {}) ->
   recursiveExtend config, options
   replaceSlashes config if os.platform() is 'win32'
   normalizeConfig config
-  deepFreeze config
-  config
+  readComponents '.', 'bower', (error, bowerComponents) ->
+    if error and not /ENOENT/.test(error.toString())
+      logger.error error
+    bowerComponents ?= []
+    config._normalized.bowerComponents = bowerComponents
+    filesMap = config._normalized.bowerFilesMap = {}
+    bowerComponents.forEach (component) ->
+      component.files.forEach (file) ->
+        filesMap[file] = component.sortingLevel
+
+    deepFreeze config
+    callback null, config

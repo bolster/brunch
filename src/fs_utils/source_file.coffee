@@ -1,6 +1,7 @@
 'use strict'
 
-async = require 'async'
+each = require 'async-each'
+waterfall = require 'async-waterfall'
 debug = require('debug')('brunch:source-file')
 fs = require 'fs'
 sysPath = require 'path'
@@ -13,7 +14,7 @@ lint = (data, path, linters, callback) ->
   if linters.length is 0
     callback null
   else
-    async.forEach linters, (linter, callback) ->
+    each linters, (linter, callback) ->
       linter.lint data, path, callback
     , callback
 
@@ -24,10 +25,10 @@ getDependencies = (data, path, compiler, callback) ->
   else
     callback null, []
 
-pipeline = (realPath, path, linters, compiler, callback) ->
+pipeline = (realPath, path, linters, compilers, callback) ->
   callbackError = (type, stringOrError) =>
     string = if stringOrError instanceof Error
-      stringOrError.toString().slice(7)
+      stringOrError.toString().replace /^([^:]+:\s+)/, ''
     else
       stringOrError
     error = new Error string
@@ -41,43 +42,57 @@ pipeline = (realPath, path, linters, compiler, callback) ->
         logger.warn "Linting of #{path}: #{error}"
       else
         return callbackError 'Linting', error if error?
-      compiler.compile source, path, (error, compiledData) =>
-        return callbackError 'Compiling', error if error?
-        # compiler is able to produce sourceMap
-        if typeof compiledData is 'object'
-          sourceMap = compiledData.map
-          compiled = compiledData.code
-        else
-          compiled = compiledData
-        getDependencies source, path, compiler, (error, dependencies) =>
-          return callbackError 'Dependency parsing', error if error?
-          callback null, {dependencies, compiled, source, sourceMap}
+      chained = compilers.map (compiler) =>
+        ({dependencies, compiled, source, sourceMap, path}, next) =>
+          compiler.compile compiled or source, path, (error, compiledData) =>
+            return callbackError 'Compiling', error if error?
+            # compiler is able to produce sourceMap
+            if typeof compiledData is 'object'
+              sourceMap = compiledData.map
+              compiled = compiledData.code
+            else
+              compiled = compiledData
+            getDependencies source, path, compiler, (error, dependencies) =>
+              return callbackError 'Dependency parsing', error if error?
+              next null, {dependencies, compiled, source, sourceMap, path}
+      chained.unshift (next) -> next null, {source, path}
+      waterfall chained, callback
 
 updateCache = (realPath, cache, error, result, wrap) ->
   if error?
     cache.error = error
   else
     {dependencies, compiled, source, sourceMap} = result
+    if sourceMap
+      debug "Generated source map for '#{realPath}': " + JSON.stringify sourceMap
+
     cache.error = null
     cache.dependencies = dependencies
     cache.source = source
     cache.compilationTime = Date.now()
-    if sourceMap
-      debug "Generated source map for '#{realPath}': " + JSON.stringify sourceMap
+
+    wrapped = wrap compiled
+
+    if typeof wrapped is 'object'
+      {prefix, suffix} = wrapped
+      nodeData = wrapped.data or compiled
+    else
+      sourcePos = wrapped.indexOf compiled
+      nodeData = if sourcePos > 0 then compiled else wrapped
+      prefix = wrapped.slice 0, sourcePos
+      suffix = wrapped.slice sourcePos + compiled.length
+
     cache.node = if sourceMap?
       map = new SourceMapConsumer sourceMap
-      SourceNode.fromStringWithSourceMap compiled, map
+      SourceNode.fromStringWithSourceMap nodeData, map
     else
-      nodeFactory compiled, realPath
+      nodeFactory nodeData, realPath
+
+    cache.node.prepend prefix if prefix
+    cache.node.add suffix if suffix
 
     cache.node.source = realPath
     cache.node.setSourceContent realPath, source
-
-    wrapped = wrap compiled
-    sourcePos = wrapped.indexOf compiled
-    if sourcePos > 0
-      cache.node.prepend wrapped.slice 0, sourcePos
-      cache.node.add wrapped.slice sourcePos + compiled.length
 
   cache
 
@@ -85,16 +100,17 @@ makeWrapper = (wrapper, path, isWrapped, isntModule) ->
   (node) ->
     if isWrapped then wrapper path, node, isntModule else node
 
-makeCompiler = (realPath, path, cache, linters, compiler, wrap) ->
+makeCompiler = (realPath, path, cache, linters, compilers, wrap) ->
   (callback) ->
-    pipeline realPath, path, linters, compiler, (error, data) =>
+    pipeline realPath, path, linters, compilers, (error, data) =>
       updateCache realPath, cache, error, data, wrap
       return callback error if error?
       callback null, cache.data
 
 # A file that will be compiled by brunch.
 module.exports = class SourceFile
-  constructor: (path, compiler, linters, wrapper, isHelper, isVendor) ->
+  constructor: (path, compilers, linters, wrapper, isHelper, isVendor) ->
+    compiler = compilers[0]
     isntModule = isHelper or isVendor
     isWrapped = compiler.type in ['javascript', 'template']
 
@@ -116,7 +132,7 @@ module.exports = class SourceFile
     @error = null
     @removed = false
     @disposed = false
-    @compile = makeCompiler realPath, @path, this, linters, compiler, wrap
+    @compile = makeCompiler realPath, @path, this, linters, compilers, wrap
 
     debug "Initializing fs_utils.SourceFile: %s", JSON.stringify {
       @path, isntModule, isWrapped

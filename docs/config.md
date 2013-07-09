@@ -140,14 +140,12 @@ Example:
 ## `notifications`
 
 
-`Boolean`: Enables or disables Growl / inotify / `terminal-notifier.app <https://github.com/alloy/terminal-notifier#download>`_ (OS X Mountain Lion +) notifications. Default value is true (enabled).
+`Boolean`: enables or disables Growl / inotify / `terminal-notifier.app <https://github.com/alloy/terminal-notifier#download>`_ (OS X Mountain Lion +) notifications. Default value is `true` (enabled).
 
 ## `optimize`
 
 
-`Optional, boolean`: determines if minifiers should be enabled or not.
-
-Default value is `false` (`true` if you run `brunch build --optimize`).
+`Boolean`: determines if minifiers should be enabled or not. Default value is `false` (`true` if you run `brunch build --optimize`).
 
 ## `server`
 
@@ -173,3 +171,9 @@ server:
   port: 6832
   base: '/myapp'
 ```
+
+## `sourceMaps`
+
+
+`Boolean`: enables or disables Source Map generation. Default value is `true` (enabled).
+
