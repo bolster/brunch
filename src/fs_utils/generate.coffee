@@ -129,21 +129,23 @@ concat = (files, path, type, definition) ->
   root.prepend definition() if type is 'javascript'
   root.toStringWithSourceMap file: path
 
-optimize = (data, smap, path, optimizer, isEnabled, callback) ->
+optimize = (data, prevMap, path, optimizer, isEnabled, callback) ->
   if isEnabled
     (optimizer.optimize or optimizer.minify) data, path, (error, result) ->
       if typeof result isnt 'string' # we have sourcemap
         {code, map} = result
-        smConsumer = new SourceMapConsumer smap.toJSON()
-        map = SourceMapGenerator.fromSourceMap new SourceMapConsumer map
-        map._sources.add path
-        map._mappings.forEach (mapping) ->
+        smConsumer = new SourceMapConsumer prevMap.toJSON()
+        newMap = SourceMapGenerator.fromSourceMap new SourceMapConsumer map
+        newMap._sources.add path
+        newMap._mappings.forEach (mapping) ->
           mapping.source = path
-        map.applySourceMap smConsumer
+        newMap.applySourceMap smConsumer
         result = code
-      callback error, result, map
+      else
+        newMap = prevMap
+      callback error, result, newMap
   else
-    callback null, data, smap
+    callback null, data, prevMap
 
 generate = (path, sourceFiles, config, optimizers, callback) ->
   type = if sourceFiles.some((file) -> file.type is 'javascript')
@@ -157,20 +159,22 @@ generate = (path, sourceFiles, config, optimizers, callback) ->
   {code, map} = concat sorted, path, type, config._normalized.modules.definition
 
   withMaps = (map and config.sourceMaps)
+  mapPath = "#{path}.map"
 
-  optimize code, map, path, optimizer, config.optimize, (error, data, map) ->
+  optimize code, map, path, optimizer, config.optimize, (error, data, newMap) ->
     return callback error if error?
 
     if withMaps
-      base = sysPath.basename "#{path}.map"
-      if type is 'javascript'
-        data += "\n//# sourceMappingURL=#{base}"
+      base = sysPath.basename mapPath
+      controlChar = if config.sourceMaps is 'new' then '#' else '@'
+      data += if type is 'javascript'
+        "\n//#{controlChar} sourceMappingURL=#{base}"
       else
-        data += "\n/*# sourceMappingURL=#{base}*/"
+        "\n/*#{controlChar} sourceMappingURL=#{base}*/"
 
     common.writeFile path, data, ->
       if withMaps
-        common.writeFile "#{path}.map", map.toString(), callback
+        common.writeFile mapPath, newMap.toString(), callback
       else
         callback()
 

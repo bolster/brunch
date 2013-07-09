@@ -29,11 +29,12 @@
   "scripts": {
     "prepublish": "node setup.js prepublish",
     "postpublish": "node setup.js postpublish",
+    "postinstall": "node setup.js postinstall",
     "test": "node setup.js test"
   },
   "dependencies": {
     "coffee-script": "~1.6.3",
-    "commander": "~1.1.1",
+    "commander": "~1.2.0",
     "mkdirp": "~0.3.5",
     "ncp": "~0.4.2",
     "debug": "~0.7.2",
@@ -42,12 +43,13 @@
     "init-skeleton": "~0.1.5",
     "loggy": "~0.2.0",
     "pushserve": "~0.1.4",
-    "read-components": "~0.3.0",
-    "async-each": "~0.1.1"
+    "read-components": "~0.4.0",
+    "async-each": "~0.1.1",
+    "async-waterfall": "~0.1.2"
   },
   "devDependencies": {
-    "mocha": "~1.10.0",
-    "chai": "~1.6.0",
-    "express": "~3.2.0"
+    "mocha": "~1.12.0",
+    "chai": "~1.7.0",
+    "express": "~3.3.0"
   }
 }
