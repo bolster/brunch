@@ -9,6 +9,7 @@ logger = require 'loggy'
 {SourceNode} = require 'source-map'
 readComponents = require 'read-components'
 debug = require('debug')('brunch:helpers')
+commonRequireDefinition = require 'commonjs-require-definition'
 # Just require.
 require 'coffee-script'
 
@@ -58,8 +59,20 @@ exports.install = install = (rootPath, callback = (->)) ->
       return callback log
     callback null, stdout
 
-exports.replaceSlashes = replaceSlashes = (config) ->
-  changePath = (string) -> string.replace(/\//g, '\\')
+exports.replaceSlashes = replaceSlashes = do ->
+  if os.platform() is 'win32'
+    (_) -> _.replace(/\//g, '\\')
+  else
+    (_) -> _
+
+
+exports.replaceBackSlashes = replaceBackSlashes = do ->
+  if os.platform() is 'win32'
+    (_) -> _.replace(/\\/g, '\/')
+  else
+    (_) -> _
+
+exports.replaceConfigSlashes = replaceConfigSlashes = (config) ->
   files = config.files or {}
   Object.keys(files).forEach (language) ->
     lang = files[language] or {}
@@ -67,16 +80,16 @@ exports.replaceSlashes = replaceSlashes = (config) ->
 
     # Modify order.
     Object.keys(order).forEach (orderKey) ->
-      lang.order[orderKey] = lang.order[orderKey].map(changePath)
+      lang.order[orderKey] = lang.order[orderKey].map(replaceSlashes)
 
     # Modify join configuration.
     switch toString.call(lang.joinTo)
       when '[object String]'
-        lang.joinTo = changePath lang.joinTo
+        lang.joinTo = replaceSlashes lang.joinTo
       when '[object Object]'
         newJoinTo = {}
         Object.keys(lang.joinTo).forEach (joinToKey) ->
-          newJoinTo[changePath joinToKey] = lang.joinTo[joinToKey]
+          newJoinTo[replaceSlashes joinToKey] = lang.joinTo[joinToKey]
         lang.joinTo = newJoinTo
   config
 
@@ -152,7 +165,7 @@ getModuleWrapper = (type, nameCleaner) -> (fullPath, data, isVendor) ->
   else
     # Wrap in common.js require definition.
     if type is 'commonjs'
-      prefix: "window.require.register(#{path}, function(exports, require, module) {\n"
+      prefix: "require.register(#{path}, function(exports, require, module) {\n"
       suffix: "});\n\n"
     else if type is 'amd'
       data: data.replace /define\s*\(/, (match) -> "#{match}#{path}, "
@@ -172,9 +185,7 @@ normalizeWrapper = (typeOrFunction, nameCleaner) ->
 normalizeDefinition = (typeOrFunction) ->
   switch typeOrFunction
     when 'commonjs'
-      path = sysPath.join __dirname, '..', 'vendor', 'require_definition.js'
-      data = fs.readFileSync(path).toString()
-      -> data
+      -> commonRequireDefinition
     when 'amd', false then -> ''
     else
       if typeof typeOrFunction is 'function'
@@ -273,7 +284,7 @@ exports.loadConfig = (configPath = 'config', options = {}, callback) ->
   deprecations.forEach logger.warn if deprecations.length > 0
 
   recursiveExtend config, options
-  replaceSlashes config if os.platform() is 'win32'
+  replaceConfigSlashes config if os.platform() is 'win32'
   normalizeConfig config
   readComponents '.', 'bower', (error, bowerComponents) ->
     if error and not /ENOENT/.test(error.toString())
