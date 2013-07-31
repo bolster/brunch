@@ -55,25 +55,30 @@ copyCounter = 0
 copyQueue = []
 exports.copy = (source, destination, callback) ->
   return callback() if ignored source
-  copy = (error) ->
+  copy = (error, retries = 0) ->
     return callback error if error?
-    fsStreamErrHandler = (err, io) ->
-      if err.toString().match /OK, open|EBUSY/
-        copyCounter--
-        copyQueue.push copy
-      else
-        debug "File copy #{io}: #{err}"
-        callback err
     copyCounter++
+    instanceError = false
+    fsStreamErrHandler = (err) ->
+      return if instanceError
+      instanceError = true
+      copyCounter--
+      switch (if retries < 5 then err.code)
+        when 'OK', 'UNKNOWN', 'EMFILE'
+          copyQueue.push -> copy null, ++retries
+        when 'EBUSY'
+          setTimeout (-> copy null, retries), 100 * ++retries 
+        else
+          debug "File copy: #{err}"
+          callback err
     input = fs.createReadStream source
     output = input.pipe fs.createWriteStream destination
-    input.on  'error', (err) -> fsStreamErrHandler err, 'input'
-    output.on 'error', (err) -> fsStreamErrHandler err, 'output'
-    output.on 'close', ->
+    input.on  'error', fsStreamErrHandler
+    output.on 'error', fsStreamErrHandler
+    output.on 'finish', ->
       if --copyCounter < 1 and copyQueue.length
-        setImmediate copyQueue.shift()
+        process.nextTick copyQueue.shift()
       callback()
-      callback = ->
   parentDir = sysPath.dirname(destination)
   exports.exists parentDir, (exists) ->
     if exists

@@ -124,6 +124,7 @@ concat = (files, path, type, definition) ->
   debug "Concatenating #{files.map((_) -> _.path).join(', ')} to #{path}"
   files.forEach (file) ->
     root.add file.node
+    root.add ';' if type is 'javascript'
     #debug JSON.stringify(file.node)
     root.setSourceContent file.node.source, file.source
 
@@ -158,7 +159,7 @@ optimize = (data, prevMap, path, optimizers, isEnabled, callback) ->
   waterfall chained, callback
 
 generate = (path, sourceFiles, config, optimizers, callback) ->
-  type = if sourceFiles.some((file) -> file.type is 'javascript')
+  type = if sourceFiles.some((file) -> file.type in ['javascript', 'template'])
     'javascript'
   else
     'stylesheet'
