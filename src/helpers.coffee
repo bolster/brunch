@@ -46,12 +46,12 @@ exports.formatError = (error, path) ->
   "#{error.brunchType} of '#{path}'
  failed. #{error.toString().slice(7)}"
 
-exports.install = install = (rootPath, callback = (->)) ->
+exports.install = install = (rootPath, command, callback = (->)) ->
   prevDir = process.cwd()
-  logger.info 'Installing packages...'
+  logger.info "Installing #{command} packages..."
   process.chdir rootPath
-  # Install node packages.
-  exec 'npm install', (error, stdout, stderr) ->
+  # Install packages.
+  exec "#{command} install", (error, stdout, stderr) ->
     process.chdir prevDir
     if error?
       log = stderr.toString()
@@ -59,18 +59,13 @@ exports.install = install = (rootPath, callback = (->)) ->
       return callback log
     callback null, stdout
 
-exports.replaceSlashes = replaceSlashes = do ->
-  if os.platform() is 'win32'
-    (_) -> _.replace(/\//g, '\\')
-  else
-    (_) -> _
+exports.isWindows = isWindows = do -> os.platform() is 'win32'
 
+exports.replaceSlashes = replaceSlashes = (_) ->
+  if isWindows then _.replace(/\//g, '\\') else _
 
-exports.replaceBackSlashes = replaceBackSlashes = do ->
-  if os.platform() is 'win32'
-    (_) -> _.replace(/\\/g, '\/')
-  else
-    (_) -> _
+exports.replaceBackSlashes = replaceBackSlashes = (_) ->
+  if isWindows then _.replace(/\\/g, '\/') else _
 
 exports.replaceConfigSlashes = replaceConfigSlashes = (config) ->
   files = config.files or {}
@@ -128,7 +123,7 @@ createJoinConfig = (configFiles) ->
     acc
 
   types = Object.keys(configFiles)
-  result = types
+  joinConfig = types
     .map (type) ->
       configFiles[type].joinTo
     .map (joinTo) ->
@@ -144,7 +139,19 @@ createJoinConfig = (configFiles) ->
       subConfig = Object.keys(joinTo).map(makeChecker).reduce(listToObj, {})
       [types[index], subConfig]
     .reduce(listToObj, {})
-  Object.freeze(result)
+
+  # special matching for plugin helpers
+  types.forEach (type) ->
+    joinConfig[type].pluginHelpers = configFiles[type].pluginHelpers or
+      do ->
+        destFiles = Object.keys joinConfig[type]
+        joinMatch = destFiles.filter (file) -> joinConfig[type][file] 'vendor/.'
+        return joinMatch[0] if joinMatch.length > 0
+        nameMatch = destFiles.filter (file) -> /vendor/i.test file
+        return nameMatch[0] if nameMatch.length > 0
+        destFiles.shift()
+
+  Object.freeze(joinConfig)
 
 identityNode =
 exports.identityNode = (code, source) ->
@@ -208,6 +215,7 @@ exports.setConfigDefaults = setConfigDefaults = (config, configPath) ->
 
   paths.config        ?= configPath       ? joinRoot 'config'
   paths.packageConfig ?= joinRoot 'package.json'
+  paths.bowerConfig   ?= joinRoot 'bower.json'
 
   conventions          = config.conventions  ?= {}
   conventions.assets  ?= /assets[\\/]/
@@ -268,6 +276,18 @@ normalizeConfig = (config) ->
   normalized.conventions = {}
   Object.keys(config.conventions).forEach (name) ->
     normalized.conventions[name] = normalizeChecker config.conventions[name]
+  normalized.paths = {}
+  normalized.paths.possibleConfigFiles = Object.keys(require.extensions)
+    .map (_) ->
+      config.paths.config + _
+    .reduce (obj, _) ->
+      obj[_] = true
+      obj
+    , {}
+  normalized.paths.allConfigFiles = [
+    config.paths.packageConfig
+    config.paths.bowerConfig
+  ].concat Object.keys normalized.paths.possibleConfigFiles
   config._normalized = normalized
   config
 
@@ -284,7 +304,7 @@ exports.loadConfig = (configPath = 'config', options = {}, callback) ->
   deprecations.forEach logger.warn if deprecations.length > 0
 
   recursiveExtend config, options
-  replaceConfigSlashes config if os.platform() is 'win32'
+  replaceConfigSlashes config if isWindows
   normalizeConfig config
   readComponents '.', 'bower', (error, bowerComponents) ->
     if error and not /ENOENT/.test(error.toString())
@@ -293,8 +313,9 @@ exports.loadConfig = (configPath = 'config', options = {}, callback) ->
     config._normalized.bowerComponents = bowerComponents
     filesMap = config._normalized.bowerFilesMap = {}
     bowerComponents.forEach (component) ->
-      component.files.forEach (file) ->
-        filesMap[file] = component.sortingLevel
+      filesLength = component.files.length
+      component.files.forEach (file, index) ->
+        filesMap[file] = component.sortingLevel + (filesLength * 0.001 - index * 0.001)
 
     deepFreeze config
     callback null, config
